@@ -14,6 +14,8 @@ import {
   PlayCircleOutlined,
   SaveOutlined,
   FileTextOutlined,
+  StopOutlined,
+  FolderOpenOutlined,
 } from '@ant-design/icons'
 import { useLocation } from 'react-router-dom'
 import { Script, scriptsApi, tasksApi, templatesApi, TaskTemplate } from '../api/client'
@@ -28,7 +30,9 @@ const TaskRunner: React.FC = () => {
   const [params, setParams] = useState<Record<string, unknown>>({})
   const [logs, setLogs] = useState<string[]>([])
   const [taskStatus, setTaskStatus] = useState<'pending' | 'running' | 'success' | 'failed'>('pending')
+  const [progress, setProgress] = useState<number | undefined>(undefined)
   const [isRunning, setIsRunning] = useState(false)
+  const [currentTaskId, setCurrentTaskId] = useState<number | null>(null)
   const [isSaveModalVisible, setIsSaveModalVisible] = useState(false)
   const [saveForm] = Form.useForm()
 
@@ -66,6 +70,8 @@ const TaskRunner: React.FC = () => {
       setParams({})
       setLogs([])
       setTaskStatus('pending')
+      setProgress(undefined)
+      setCurrentTaskId(null)
       loadTemplates(scriptId)
     }
   }
@@ -86,10 +92,12 @@ const TaskRunner: React.FC = () => {
     setIsRunning(true)
     setLogs([])
     setTaskStatus('running')
+    setProgress(undefined)
 
     try {
       // Create task (now starts running immediately on server)
       const { task_id } = await tasksApi.run(selectedScript.id!, params)
+      setCurrentTaskId(task_id)
 
       // Try WebSocket first
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -115,6 +123,7 @@ const TaskRunner: React.FC = () => {
             if (task.status === 'success' || task.status === 'failed') {
               setTaskStatus(task.status)
               setIsRunning(false)
+              setProgress(task.status === 'success' ? 100 : undefined)
               message.success(`Task completed with status: ${task.status}`)
               if (pollInterval) clearInterval(pollInterval)
             }
@@ -136,9 +145,12 @@ const TaskRunner: React.FC = () => {
 
           if (data.type === 'log') {
             setLogs(prev => [...prev, data.data])
+          } else if (data.type === 'progress') {
+            setProgress(data.progress)
           } else if (data.type === 'complete') {
             setTaskStatus(data.status)
             setIsRunning(false)
+            setProgress(data.status === 'success' ? 100 : undefined)
             message.success(`Task completed with status: ${data.status}`)
             if (ws) ws.close()
           } else if (data.error) {
@@ -183,6 +195,42 @@ const TaskRunner: React.FC = () => {
       message.error('Failed to start task')
       setTaskStatus('failed')
       setIsRunning(false)
+    }
+  }
+
+  const handleCancel = async () => {
+    if (!currentTaskId) return
+
+    Modal.confirm({
+      title: 'Cancel Task',
+      content: 'Are you sure you want to cancel this running task?',
+      okText: 'Cancel Task',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await tasksApi.cancel(currentTaskId)
+          message.success('Task cancelled')
+          setIsRunning(false)
+          setTaskStatus('failed')
+        } catch (error) {
+          message.error('Failed to cancel task')
+        }
+      },
+    })
+  }
+
+  const handleOpenOutputFolder = async () => {
+    const outputPath = params.output as string
+    if (!outputPath) {
+      message.warning('No output path specified')
+      return
+    }
+
+    try {
+      await tasksApi.openFolder(outputPath)
+      message.success('Opened output folder')
+    } catch (error) {
+      message.error('Failed to open output folder')
     }
   }
 
@@ -274,10 +322,21 @@ const TaskRunner: React.FC = () => {
                 icon={<PlayCircleOutlined />}
                 onClick={handleRun}
                 loading={isRunning}
+                disabled={isRunning}
                 size="large"
               >
                 Run Script
               </Button>
+              {isRunning && (
+                <Button
+                  danger
+                  icon={<StopOutlined />}
+                  onClick={handleCancel}
+                  size="large"
+                >
+                  Cancel Task
+                </Button>
+              )}
               <Button
                 icon={<SaveOutlined />}
                 onClick={() => setIsSaveModalVisible(true)}
@@ -291,7 +350,25 @@ const TaskRunner: React.FC = () => {
       </Card>
 
       {/* Logs Viewer */}
-      {logs.length > 0 && <LogViewer logs={logs} status={taskStatus} />}
+      {logs.length > 0 && (
+        <>
+          <LogViewer logs={logs} status={taskStatus} progress={progress} />
+
+          {/* Open Output Folder Button (only show when task is complete and output path exists) */}
+          {taskStatus === 'success' && params.output && (
+            <div style={{ marginTop: 16, textAlign: 'center' }}>
+              <Button
+                type="primary"
+                icon={<FolderOpenOutlined />}
+                onClick={handleOpenOutputFolder}
+                size="large"
+              >
+                Open Output Folder
+              </Button>
+            </div>
+          )}
+        </>
+      )}
 
       {/* Save Template Modal */}
       <Modal

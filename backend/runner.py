@@ -97,9 +97,15 @@ class ScriptRunner:
 
                     if is_stderr:
                         stderr_lines.append(decoded_line)
+                        # Write to DB immediately
+                        task_run.stderr = ''.join(stderr_lines)
+                        self.session.commit()
                         yield f"STDERR: {decoded_line}"
                     else:
                         stdout_lines.append(decoded_line)
+                        # Write to DB immediately
+                        task_run.stdout = ''.join(stdout_lines)
+                        self.session.commit()
                         yield decoded_line
 
             # Collect output from both streams

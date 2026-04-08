@@ -106,6 +106,8 @@ export const tasksApi = {
     })
     return response.data
   },
+  cancel: (id: number) => api.post(`/tasks/${id}/cancel`).then(r => r.data),
+  openFolder: (path: string) => api.post('/shell/open-folder', { path }).then(r => r.data),
 }
 
 // ─── Templates API ────────────────────────────────────────────────────────────

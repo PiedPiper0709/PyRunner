@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from sqlmodel import Session, select
-from typing import List, Optional
+from typing import List, Optional, Dict
 from pathlib import Path
 from datetime import datetime
 import asyncio
+import re
 from backend.database import get_session, engine
 from backend.models import TaskRun, Script, TaskStatus
 from backend.runner import ScriptRunner
@@ -15,6 +16,9 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
 # Get uploads directory
 UPLOADS_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
+
+# Track running tasks for cancellation
+_running_tasks: Dict[int, asyncio.Task] = {}
 
 
 class TaskRunRequest(BaseModel):
@@ -53,36 +57,48 @@ def get_task(task_id: int, session: Session = Depends(get_session)):
 
 async def _execute_task(task_id: int):
     """Execute a task in the background"""
-    with Session(engine) as session:
-        task_run = session.get(TaskRun, task_id)
-        if not task_run:
-            return
+    try:
+        with Session(engine) as session:
+            task_run = session.get(TaskRun, task_id)
+            if not task_run:
+                return
 
-        script = session.get(Script, task_run.script_id)
-        if not script:
-            task_run.status = TaskStatus.FAILED
-            task_run.stderr = "Script not found"
-            task_run.finished_at = datetime.utcnow()
-            session.commit()
-            return
+            script = session.get(Script, task_run.script_id)
+            if not script:
+                task_run.status = TaskStatus.FAILED
+                task_run.stderr = "Script not found"
+                task_run.finished_at = datetime.utcnow()
+                session.commit()
+                return
 
-        # Create runner and execute
-        runner = ScriptRunner(SCRIPTS_DIR, session)
+            # Create runner and execute
+            runner = ScriptRunner(SCRIPTS_DIR, session)
 
-        # Consume the entire generator and accumulate output
-        stdout_lines = []
-        stderr_lines = []
+            # Consume the entire generator and accumulate output
+            stdout_lines = []
+            stderr_lines = []
 
-        try:
-            async for line in runner.run_script(task_run, script):
-                # Accumulate output (runner already updates DB at the end)
-                if line.startswith("STDERR:"):
-                    stderr_lines.append(line[8:])  # Remove "STDERR: " prefix
-                else:
-                    stdout_lines.append(line)
-        except Exception as e:
-            # Error handling is already done in runner, but catch any unexpected issues
-            print(f"Unexpected error executing task {task_id}: {e}")
+            try:
+                async for line in runner.run_script(task_run, script):
+                    # Accumulate output (runner already updates DB at the end)
+                    if line.startswith("STDERR:"):
+                        stderr_lines.append(line[8:])  # Remove "STDERR: " prefix
+                    else:
+                        stdout_lines.append(line)
+            except asyncio.CancelledError:
+                # Task was cancelled
+                task_run.status = TaskStatus.FAILED
+                task_run.stderr = (task_run.stderr or "") + "\n[任务已被用户终止]"
+                task_run.finished_at = datetime.utcnow()
+                session.commit()
+                raise
+            except Exception as e:
+                # Error handling is already done in runner, but catch any unexpected issues
+                print(f"Unexpected error executing task {task_id}: {e}")
+    finally:
+        # Remove from running tasks
+        if task_id in _running_tasks:
+            del _running_tasks[task_id]
 
 
 @router.post("/run")
@@ -104,10 +120,30 @@ async def run_task(request: TaskRunRequest, session: Session = Depends(get_sessi
     session.commit()
     session.refresh(task_run)
 
-    # Start execution in background (don't wait)
-    asyncio.create_task(_execute_task(task_run.id))
+    # Start execution in background and track it
+    task = asyncio.create_task(_execute_task(task_run.id))
+    _running_tasks[task_run.id] = task
 
     return {"task_id": task_run.id, "status": "running"}
+
+
+def _parse_progress(text: str) -> Optional[int]:
+    """Parse progress from text like 'X/Y' or 'XX%'"""
+    # Match patterns like "50/100" or "50%"
+    # Look for percentage first
+    percent_match = re.search(r'(\d+)%', text)
+    if percent_match:
+        return min(100, max(0, int(percent_match.group(1))))
+
+    # Look for fraction like "50/100"
+    fraction_match = re.search(r'(\d+)/(\d+)', text)
+    if fraction_match:
+        current = int(fraction_match.group(1))
+        total = int(fraction_match.group(2))
+        if total > 0:
+            return min(100, max(0, int((current / total) * 100)))
+
+    return None
 
 
 @router.websocket("/ws/{task_id}/logs")
@@ -119,6 +155,7 @@ async def task_logs_websocket(websocket: WebSocket, task_id: int):
         # Track last sent line count to only send new lines
         last_stdout_line_count = 0
         last_stderr_line_count = 0
+        last_progress = None
 
         while True:
             # Get task from database
@@ -136,18 +173,28 @@ async def task_logs_websocket(websocket: WebSocket, task_id: int):
                 # Send new stdout lines
                 for i in range(last_stdout_line_count, len(stdout_lines)):
                     line = stdout_lines[i]
-                    await websocket.send_json({"type": "log", "data": line + "\n"})
+                    await websocket.send_json({"type": "log", "data": line + "\n", "stream": "stdout"})
+
+                    # Try to parse progress
+                    progress = _parse_progress(line)
+                    if progress is not None and progress != last_progress:
+                        last_progress = progress
+                        await websocket.send_json({"type": "progress", "progress": progress})
 
                 # Send new stderr lines
                 for i in range(last_stderr_line_count, len(stderr_lines)):
                     line = stderr_lines[i]
-                    await websocket.send_json({"type": "log", "data": f"STDERR: {line}\n"})
+                    await websocket.send_json({"type": "log", "data": f"STDERR: {line}\n", "stream": "stderr"})
 
                 last_stdout_line_count = len(stdout_lines)
                 last_stderr_line_count = len(stderr_lines)
 
                 # Check if task is complete
                 if task.status in [TaskStatus.SUCCESS, TaskStatus.FAILED]:
+                    # Send 100% progress if task succeeded
+                    if task.status == TaskStatus.SUCCESS and last_progress != 100:
+                        await websocket.send_json({"type": "progress", "progress": 100})
+
                     await websocket.send_json({
                         "type": "complete",
                         "status": task.status,
@@ -156,8 +203,8 @@ async def task_logs_websocket(websocket: WebSocket, task_id: int):
                     await websocket.close()
                     return
 
-            # Poll every 500ms
-            await asyncio.sleep(0.5)
+            # Poll every 300ms
+            await asyncio.sleep(0.3)
 
     except WebSocketDisconnect:
         pass
@@ -165,6 +212,29 @@ async def task_logs_websocket(websocket: WebSocket, task_id: int):
         await websocket.send_json({"error": str(e)})
     finally:
         await websocket.close()
+
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(task_id: int, session: Session = Depends(get_session)):
+    """Cancel a running task"""
+    task = session.get(TaskRun, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task.status not in [TaskStatus.PENDING, TaskStatus.RUNNING]:
+        raise HTTPException(status_code=400, detail="Task is not running")
+
+    # Cancel the asyncio task if it exists
+    if task_id in _running_tasks:
+        _running_tasks[task_id].cancel()
+
+    # Update task status
+    task.status = TaskStatus.FAILED
+    task.stderr = (task.stderr or "") + "\n[任务已被用户终止]"
+    task.finished_at = datetime.utcnow()
+    session.commit()
+
+    return {"message": "Task cancelled successfully"}
 
 
 @router.delete("/{task_id}")

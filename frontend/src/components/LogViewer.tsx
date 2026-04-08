@@ -1,12 +1,13 @@
 import React, { useEffect, useRef } from 'react'
-import { Card } from 'antd'
+import { Card, Progress } from 'antd'
 
 interface LogViewerProps {
   logs: string[]
   status?: 'running' | 'success' | 'failed' | 'pending'
+  progress?: number
 }
 
-const LogViewer: React.FC<LogViewerProps> = ({ logs, status }) => {
+const LogViewer: React.FC<LogViewerProps> = ({ logs, status, progress }) => {
   const logEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -27,6 +28,14 @@ const LogViewer: React.FC<LogViewerProps> = ({ logs, status }) => {
     }
   }
 
+  const getProgressStatus = () => {
+    if (status === 'success') return 'success'
+    if (status === 'failed') return 'exception'
+    return 'active'
+  }
+
+  const displayProgress = progress !== undefined ? progress : (status === 'success' ? 100 : 0)
+
   return (
     <Card
       title="Execution Logs"
@@ -39,6 +48,17 @@ const LogViewer: React.FC<LogViewerProps> = ({ logs, status }) => {
       }
       style={{ marginTop: 16 }}
     >
+      {/* Progress Bar */}
+      {(status === 'running' || status === 'success' || status === 'failed') && (
+        <div style={{ marginBottom: 16 }}>
+          <Progress
+            percent={displayProgress}
+            status={getProgressStatus()}
+            strokeColor={status === 'running' && progress === undefined ? undefined : getStatusColor()}
+          />
+        </div>
+      )}
+
       <div
         style={{
           backgroundColor: '#1e1e1e',
@@ -47,7 +67,7 @@ const LogViewer: React.FC<LogViewerProps> = ({ logs, status }) => {
           borderRadius: '4px',
           fontFamily: 'Monaco, Menlo, "Courier New", monospace',
           fontSize: '13px',
-          maxHeight: '500px',
+          height: '400px',
           overflowY: 'auto',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',

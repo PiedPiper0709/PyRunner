@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from backend.database import init_db
-from backend.routers import scripts, tasks, templates, envs
+from backend.routers import scripts, tasks, templates, envs, shell
 
 
 @asynccontextmanager
@@ -63,6 +63,7 @@ app.include_router(scripts.router)
 app.include_router(tasks.router)
 app.include_router(templates.router)
 app.include_router(envs.router)
+app.include_router(shell.router)
 
 
 @app.get("/")
