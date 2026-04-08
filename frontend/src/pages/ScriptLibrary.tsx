@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Button, List, Tag, Space, Modal, Form, Input, message, Empty } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { Card, Button, List, Tag, Space, Modal, Form, Input, message, Empty, Upload } from 'antd'
+import { PlusOutlined, EditOutlined, DeleteOutlined, PlayCircleOutlined, UploadOutlined } from '@ant-design/icons'
 import { Script, scriptsApi } from '../api/client'
 import { useNavigate } from 'react-router-dom'
+import type { UploadFile } from 'antd'
 
 const ScriptLibrary: React.FC = () => {
   const [scripts, setScripts] = useState<Script[]>([])
   const [loading, setLoading] = useState(false)
   const [selectedScript, setSelectedScript] = useState<Script | null>(null)
   const [isModalVisible, setIsModalVisible] = useState(false)
+  const [uploadedFile, setUploadedFile] = useState<UploadFile | null>(null)
   const [form] = Form.useForm()
   const navigate = useNavigate()
 
@@ -32,11 +34,13 @@ const ScriptLibrary: React.FC = () => {
   const handleCreate = () => {
     form.resetFields()
     setSelectedScript(null)
+    setUploadedFile(null)
     setIsModalVisible(true)
   }
 
   const handleEdit = (script: Script) => {
     setSelectedScript(script)
+    setUploadedFile(null)
     form.setFieldsValue({
       ...script,
       tags: script.tags.join(', '),
@@ -90,6 +94,24 @@ const ScriptLibrary: React.FC = () => {
 
   const handleRun = (script: Script) => {
     navigate('/runner', { state: { script } })
+  }
+
+  const handleUpload = async (file: File) => {
+    try {
+      const result = await scriptsApi.upload(file)
+      message.success(`File uploaded: ${result.filename}`)
+      form.setFieldsValue({ file_path: result.file_path })
+      setUploadedFile({
+        uid: '-1',
+        name: result.filename,
+        status: 'done',
+      })
+      return false
+    } catch (error) {
+      message.error('Failed to upload file')
+      console.error(error)
+      return false
+    }
   }
 
   return (
@@ -176,6 +198,24 @@ const ScriptLibrary: React.FC = () => {
 
           <Form.Item name="description" label="Description">
             <Input.TextArea rows={2} placeholder="What does this script do?" />
+          </Form.Item>
+
+          <Form.Item label="Upload Script File" tooltip="Upload a .py file (optional)">
+            <Upload
+              accept=".py"
+              maxCount={1}
+              fileList={uploadedFile ? [uploadedFile] : []}
+              beforeUpload={(file) => {
+                handleUpload(file)
+                return false
+              }}
+              onRemove={() => {
+                setUploadedFile(null)
+                form.setFieldsValue({ file_path: '' })
+              }}
+            >
+              <Button icon={<UploadOutlined />}>Click or drag .py file here</Button>
+            </Upload>
           </Form.Item>
 
           <Form.Item

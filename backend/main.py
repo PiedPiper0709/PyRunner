@@ -11,6 +11,13 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database
     init_db()
     print("✅ Database initialized")
+
+    # Create uploads directory
+    from pathlib import Path
+    uploads_dir = Path(__file__).parent.parent / "data" / "uploads"
+    uploads_dir.mkdir(parents=True, exist_ok=True)
+    print("✅ Uploads directory created")
+
     yield
     # Shutdown: cleanup if needed
     print("👋 Shutting down...")

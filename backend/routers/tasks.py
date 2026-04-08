@@ -1,7 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from sqlmodel import Session, select
 from typing import List, Optional
 from pathlib import Path
+from datetime import datetime
 from backend.database import get_session
 from backend.models import TaskRun, Script, TaskStatus
 from backend.runner import ScriptRunner
@@ -11,6 +12,8 @@ router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
 # Get scripts directory
 SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
+# Get uploads directory
+UPLOADS_DIR = Path(__file__).parent.parent.parent / "data" / "uploads"
 
 
 class TaskRunRequest(BaseModel):
@@ -124,3 +127,19 @@ def delete_task(task_id: int, session: Session = Depends(get_session)):
     session.delete(task)
     session.commit()
     return {"message": "Task deleted successfully"}
+
+
+@router.post("/upload-file")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload a file (Excel/CSV/JSON etc.) to data/uploads directory"""
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Add timestamp prefix to avoid conflicts
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{timestamp}_{file.filename}"
+    target_path = UPLOADS_DIR / filename
+
+    content = await file.read()
+    target_path.write_bytes(content)
+
+    return {"file_path": str(target_path.absolute())}

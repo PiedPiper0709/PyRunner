@@ -1,11 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlmodel import Session, select
 from typing import List, Optional
 from backend.database import get_session
 from backend.models import Script
 from datetime import datetime
+from pathlib import Path
 
 router = APIRouter(prefix="/api/scripts", tags=["scripts"])
+
+# Get scripts directory
+SCRIPTS_DIR = Path(__file__).parent.parent.parent / "scripts"
 
 
 @router.get("", response_model=List[Script])
@@ -78,3 +82,26 @@ def delete_script(script_id: int, session: Session = Depends(get_session)):
     session.delete(script)
     session.commit()
     return {"message": "Script deleted successfully"}
+
+
+@router.post("/upload")
+async def upload_script(file: UploadFile = File(...)):
+    """Upload a .py file to the scripts directory"""
+    if not file.filename or not file.filename.endswith(".py"):
+        raise HTTPException(status_code=400, detail="Only .py files are allowed")
+
+    SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # De-duplicate filename: if exists, add _1, _2, ...
+    stem = Path(file.filename).stem
+    suffix = Path(file.filename).suffix
+    target_path = SCRIPTS_DIR / file.filename
+    counter = 1
+    while target_path.exists():
+        target_path = SCRIPTS_DIR / f"{stem}_{counter}{suffix}"
+        counter += 1
+
+    content = await file.read()
+    target_path.write_bytes(content)
+
+    return {"filename": target_path.name, "file_path": target_path.name}

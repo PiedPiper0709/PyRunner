@@ -11,7 +11,7 @@ const api = axios.create({
 
 export interface ParamSchema {
   name: string
-  type: 'string' | 'number' | 'boolean' | 'select'
+  type: 'string' | 'number' | 'boolean' | 'select' | 'file' | 'output_path'
   default?: string | number | boolean
   required?: boolean
   description?: string
@@ -75,6 +75,14 @@ export const scriptsApi = {
   create: (data: Script) => api.post<Script>('/scripts', data).then(r => r.data),
   update: (id: number, data: Script) => api.put<Script>(`/scripts/${id}`, data).then(r => r.data),
   delete: (id: number) => api.delete(`/scripts/${id}`).then(r => r.data),
+  upload: async (file: File): Promise<{ filename: string; file_path: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await axios.post('/api/scripts/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
 }
 
 // ─── Tasks API ────────────────────────────────────────────────────────────────
@@ -90,6 +98,14 @@ export const tasksApi = {
       template_id: templateId,
     }).then(r => r.data),
   delete: (id: number) => api.delete(`/tasks/${id}`).then(r => r.data),
+  uploadFile: async (file: File): Promise<{ file_path: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    const response = await axios.post('/api/tasks/upload-file', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    return response.data
+  },
 }
 
 // ─── Templates API ────────────────────────────────────────────────────────────

@@ -1,6 +1,8 @@
-import React from 'react'
-import { Form, Input, InputNumber, Switch, Select } from 'antd'
-import { ParamSchema } from '../api/client'
+import React, { useState } from 'react'
+import { Form, Input, InputNumber, Switch, Select, Upload, Button, message } from 'antd'
+import { UploadOutlined } from '@ant-design/icons'
+import { ParamSchema, tasksApi } from '../api/client'
+import type { UploadFile } from 'antd'
 
 interface ParamFormProps {
   schema: ParamSchema[]
@@ -10,9 +12,31 @@ interface ParamFormProps {
 
 const ParamForm: React.FC<ParamFormProps> = ({ schema, initialValues, onValuesChange }) => {
   const [form] = Form.useForm()
+  const [uploadedFiles, setUploadedFiles] = useState<Record<string, UploadFile>>({})
 
   const handleValuesChange = (_: unknown, allValues: Record<string, unknown>) => {
     onValuesChange?.(allValues)
+  }
+
+  const handleFileUpload = async (paramName: string, file: File) => {
+    try {
+      const result = await tasksApi.uploadFile(file)
+      message.success(`File uploaded: ${file.name}`)
+      form.setFieldsValue({ [paramName]: result.file_path })
+      setUploadedFiles(prev => ({
+        ...prev,
+        [paramName]: {
+          uid: '-1',
+          name: file.name,
+          status: 'done',
+        }
+      }))
+      return false
+    } catch (error) {
+      message.error('Failed to upload file')
+      console.error(error)
+      return false
+    }
   }
 
   const renderFormItem = (param: ParamSchema) => {
@@ -46,6 +70,38 @@ const ParamForm: React.FC<ParamFormProps> = ({ schema, initialValues, onValuesCh
               placeholder={`Select ${param.name}`}
               options={param.enum_values?.map(v => ({ label: v, value: v }))}
             />
+          </Form.Item>
+        )
+
+      case 'file':
+        return (
+          <Form.Item {...commonProps}>
+            <Upload
+              maxCount={1}
+              fileList={uploadedFiles[param.name] ? [uploadedFiles[param.name]] : []}
+              beforeUpload={(file) => {
+                handleFileUpload(param.name, file)
+                return false
+              }}
+              onRemove={() => {
+                setUploadedFiles(prev => {
+                  const newFiles = { ...prev }
+                  delete newFiles[param.name]
+                  return newFiles
+                })
+                form.setFieldsValue({ [param.name]: '' })
+              }}
+            >
+              <Button icon={<UploadOutlined />}>Upload File</Button>
+            </Upload>
+            <Input type="hidden" />
+          </Form.Item>
+        )
+
+      case 'output_path':
+        return (
+          <Form.Item {...commonProps} tooltip={param.description || 'Output file path (e.g., /path/to/output.xlsx)'}>
+            <Input placeholder="/path/to/output.xlsx" />
           </Form.Item>
         )
 
