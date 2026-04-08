@@ -88,39 +88,96 @@ const TaskRunner: React.FC = () => {
     setTaskStatus('running')
 
     try {
-      // Create task
+      // Create task (now starts running immediately on server)
       const { task_id } = await tasksApi.run(selectedScript.id!, params)
 
-      // Connect to WebSocket for real-time logs
+      // Try WebSocket first
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-      const ws = new WebSocket(`${protocol}//${window.location.host}/api/tasks/ws/${task_id}/logs`)
+      const wsUrl = `${protocol}//${window.location.host}/api/tasks/ws/${task_id}/logs`
+      let ws: WebSocket | null = null
+      let wsConnected = false
+      let pollInterval: NodeJS.Timeout | null = null
 
-      ws.onmessage = event => {
-        const data = JSON.parse(event.data)
+      const startPolling = () => {
+        // Fallback: poll every 2 seconds
+        pollInterval = setInterval(async () => {
+          try {
+            const task = await tasksApi.get(task_id)
 
-        if (data.type === 'log') {
-          setLogs(prev => [...prev, data.data])
-        } else if (data.type === 'complete') {
-          setTaskStatus(data.status)
-          setIsRunning(false)
-          message.success(`Task completed with status: ${data.status}`)
-          ws.close()
-        } else if (data.error) {
-          message.error(data.error)
-          setTaskStatus('failed')
-          setIsRunning(false)
-          ws.close()
+            // Update logs
+            const newLogs = task.stdout.split('\n').filter(line => line.trim() !== '')
+            if (task.stderr) {
+              newLogs.push(...task.stderr.split('\n').filter(line => line.trim() !== '').map(line => `STDERR: ${line}`))
+            }
+            setLogs(newLogs)
+
+            // Check if complete
+            if (task.status === 'success' || task.status === 'failed') {
+              setTaskStatus(task.status)
+              setIsRunning(false)
+              message.success(`Task completed with status: ${task.status}`)
+              if (pollInterval) clearInterval(pollInterval)
+            }
+          } catch (error) {
+            console.error('Polling error:', error)
+          }
+        }, 2000)
+      }
+
+      try {
+        ws = new WebSocket(wsUrl)
+
+        ws.onopen = () => {
+          wsConnected = true
         }
-      }
 
-      ws.onerror = () => {
-        message.error('WebSocket connection error')
-        setTaskStatus('failed')
-        setIsRunning(false)
-      }
+        ws.onmessage = event => {
+          const data = JSON.parse(event.data)
 
-      ws.onclose = () => {
-        setIsRunning(false)
+          if (data.type === 'log') {
+            setLogs(prev => [...prev, data.data])
+          } else if (data.type === 'complete') {
+            setTaskStatus(data.status)
+            setIsRunning(false)
+            message.success(`Task completed with status: ${data.status}`)
+            if (ws) ws.close()
+          } else if (data.error) {
+            message.error(data.error)
+            setTaskStatus('failed')
+            setIsRunning(false)
+            if (ws) ws.close()
+          }
+        }
+
+        ws.onerror = () => {
+          if (!wsConnected) {
+            // WebSocket failed to connect, start polling
+            console.log('WebSocket failed, falling back to polling')
+            startPolling()
+          } else {
+            message.error('WebSocket connection error')
+            setTaskStatus('failed')
+            setIsRunning(false)
+          }
+        }
+
+        ws.onclose = () => {
+          setIsRunning(false)
+          if (pollInterval) clearInterval(pollInterval)
+        }
+
+        // If WebSocket doesn't connect within 2 seconds, start polling
+        setTimeout(() => {
+          if (!wsConnected) {
+            console.log('WebSocket timeout, falling back to polling')
+            if (ws) ws.close()
+            startPolling()
+          }
+        }, 2000)
+      } catch (error) {
+        // WebSocket creation failed, start polling immediately
+        console.log('WebSocket creation failed, using polling')
+        startPolling()
       }
     } catch (error) {
       message.error('Failed to start task')

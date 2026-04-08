@@ -18,6 +18,25 @@ async def lifespan(app: FastAPI):
     uploads_dir.mkdir(parents=True, exist_ok=True)
     print("✅ Uploads directory created")
 
+    # Fix pending tasks (mark as failed since server restarted)
+    from backend.database import engine
+    from backend.models import TaskRun, TaskStatus
+    from sqlmodel import Session, select
+    from datetime import datetime
+
+    with Session(engine) as session:
+        statement = select(TaskRun).where(TaskRun.status == TaskStatus.PENDING)
+        pending_tasks = session.exec(statement).all()
+
+        for task in pending_tasks:
+            task.status = TaskStatus.FAILED
+            task.stderr = "Server restarted, task was not executed"
+            task.finished_at = datetime.utcnow()
+
+        if pending_tasks:
+            session.commit()
+            print(f"⚠️  Marked {len(pending_tasks)} pending tasks as failed")
+
     yield
     # Shutdown: cleanup if needed
     print("👋 Shutting down...")
