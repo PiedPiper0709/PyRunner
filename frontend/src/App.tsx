@@ -6,10 +6,12 @@ import {
   PlayCircleOutlined,
   HistoryOutlined,
   ThunderboltOutlined,
+  KeyOutlined,
 } from '@ant-design/icons'
 import ScriptLibrary from './pages/ScriptLibrary'
 import TaskRunner from './pages/TaskRunner'
 import TaskHistory from './pages/TaskHistory'
+import EnvVars from './pages/EnvVars'
 import './App.css'
 
 const { Header, Content, Footer } = Layout
@@ -54,6 +56,11 @@ const App: React.FC = () => {
                 icon: <HistoryOutlined />,
                 label: <Link to="/history">Task History</Link>,
               },
+              {
+                key: 'envs',
+                icon: <KeyOutlined />,
+                label: <Link to="/envs">Env Vars</Link>,
+              },
             ]}
           />
         </Header>
@@ -64,6 +71,7 @@ const App: React.FC = () => {
               <Route path="/" element={<ScriptLibrary />} />
               <Route path="/runner" element={<TaskRunner />} />
               <Route path="/history" element={<TaskHistory />} />
+              <Route path="/envs" element={<EnvVars />} />
             </Routes>
           </div>
         </Content>
