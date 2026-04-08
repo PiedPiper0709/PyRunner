@@ -37,6 +37,10 @@ data/*.db-journal
 *.sqlite
 *.sqlite3
 
+# Uploads and outputs
+data/uploads/
+scripts/output*.xlsx
+
 # IDEs
 .vscode/
 .idea/

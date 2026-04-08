@@ -31,6 +31,10 @@ const ParamForm: React.FC<ParamFormProps> = ({ schema, initialValues, onValuesCh
           status: 'done',
         }
       }))
+      // 手动触发 onValuesChange，因为 setFieldsValue 不会自动触发
+      const allValues = form.getFieldsValue()
+      allValues[paramName] = result.file_path
+      onValuesChange?.(allValues)
       return false
     } catch (error) {
       message.error('Failed to upload file')
